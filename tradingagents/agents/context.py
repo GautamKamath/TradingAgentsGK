@@ -201,18 +201,44 @@ def report_or_absent(text: str, source: str) -> str:
     return f"(No {source} report in this run: it is not available, not an empty finding.)"
 
 
+def get_trading_restriction() -> str:
+    """Return the caller's profit-sale lock as a prompt block, or "" when none is set.
+
+    Some accounts may not sell a position at a profit within ``profit_lock_days``
+    of buying it, while a loss may be cut at any time. A Buy made for a move that
+    rises and falls back inside that period cannot be taken, so the decision
+    agents are told to buy only on a case that holds past it.
+    """
+    from tradingagents.dataflows.config import get_config
+    from tradingagents.portfolio import coerce_profit_lock_days
+
+    days = coerce_profit_lock_days(get_config().get("profit_lock_days"))
+    if days is None:
+        return ""
+    return (
+        f"Trading restriction: the caller may not sell a position at a profit within {days} days "
+        "of buying it; a position at a loss may be sold at any time, so a stop-loss still applies. "
+        f"Recommend Buy or Overweight only when the case is expected to hold for at least {days} days, "
+        f"never for a move expected to rise and fall back within {days} days, and give any purchase "
+        f"a time horizon of at least {days} days. Do not recommend selling at a profit a position "
+        "still inside that period."
+    )
+
+
 def get_portfolio_context_from_state(state: Mapping[str, Any]) -> str:
-    """Return the caller's portfolio block, or a notice that none was given.
+    """Return the caller's portfolio block, or a notice that none was given,
+    followed by the caller's trading restriction when one is configured.
 
     A run without portfolio context must not read as a flat book: the agents
     would otherwise size as if the caller held nothing, which is a claim about
     an account we were never told about.
     """
     context = state.get("portfolio_context")
-    if isinstance(context, str) and context.strip():
-        return context
-    return (
-        "Portfolio context: not provided. You do not know the caller's current "
-        "holdings or cash, so do not assume a flat book; give direction and "
-        "sizing guidance in terms the caller can apply to their own position."
-    )
+    if not (isinstance(context, str) and context.strip()):
+        context = (
+            "Portfolio context: not provided. You do not know the caller's current "
+            "holdings or cash, so do not assume a flat book; give direction and "
+            "sizing guidance in terms the caller can apply to their own position."
+        )
+    restriction = get_trading_restriction()
+    return f"{context}\n{restriction}" if restriction else context

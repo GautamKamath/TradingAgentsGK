@@ -237,3 +237,119 @@ def test_cli_passes_a_valid_portfolio_into_the_run(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert ran[0]["portfolio"].position_in("AAPL").quantity == 120
+
+
+# --- profit-sale lock (profit_lock_days) --------------------------------------
+
+LOCKED = {"positions": [{"ticker": "AAPL", "quantity": 10, "average_price": 150.0,
+                         "purchase_date": "2026-08-01"}]}
+
+
+@pytest.mark.unit
+def test_a_position_inside_the_lock_says_until_when_it_sells_only_at_a_loss():
+    text = PortfolioContext.model_validate(LOCKED).render("AAPL", "2026-08-14", 30)
+    assert "bought 2026-08-01" in text
+    assert "Until 2026-08-31 this position may be sold only at a loss" in text
+
+
+@pytest.mark.unit
+def test_a_position_past_the_lock_carries_no_lock_line():
+    text = PortfolioContext.model_validate(LOCKED).render("AAPL", "2026-08-31", 30)
+    assert "bought 2026-08-01" in text and "only at a loss" not in text
+
+
+@pytest.mark.unit
+def test_without_a_lock_the_purchase_date_is_only_reported():
+    text = PortfolioContext.model_validate(LOCKED).render("AAPL", "2026-08-14")
+    assert "bought 2026-08-01" in text and "only at a loss" not in text
+
+
+@pytest.mark.unit
+def test_no_restriction_is_added_when_profit_lock_days_is_unset():
+    from tradingagents.dataflows.config import run_config
+
+    with run_config({"profit_lock_days": None}):
+        block = get_portfolio_context_from_state({"portfolio_context": "Portfolio: flat"})
+    assert block == "Portfolio: flat"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("portfolio_context", ["Portfolio: flat", ""])
+def test_the_restriction_follows_the_portfolio_block_whether_or_not_one_was_given(portfolio_context):
+    from tradingagents.dataflows.config import run_config
+
+    with run_config({"profit_lock_days": "30"}):  # env vars arrive as strings
+        block = get_portfolio_context_from_state({"portfolio_context": portfolio_context})
+    assert "may not sell a position at a profit within 30 days" in block
+    assert "at least 30 days" in block
+    assert ("Portfolio: flat" in block) == bool(portfolio_context)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [0, -5, "abc", True])
+def test_an_unusable_profit_lock_is_rejected(value):
+    from tradingagents.portfolio import coerce_profit_lock_days
+
+    with pytest.raises(ValueError, match="profit_lock_days"):
+        coerce_profit_lock_days(value)
+
+
+@pytest.mark.unit
+def test_create_run_state_renders_the_lock_as_of_the_trade_date(tmp_path):
+    graph = _bare_graph(tmp_path)
+    graph.config["profit_lock_days"] = 30
+    state = graph.create_run_state("AAPL", "2026-08-14", portfolio=PortfolioContext.model_validate(LOCKED))
+    assert "Until 2026-08-31" in state["portfolio_context"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("module, factory", [
+    ("tradingagents.agents.trader.trader", "create_trader"),
+    ("tradingagents.agents.managers.portfolio_manager", "create_portfolio_manager"),
+    ("tradingagents.agents.risk_mgmt.aggressive_debator", "create_aggressive_debator"),
+    ("tradingagents.agents.risk_mgmt.conservative_debator", "create_conservative_debator"),
+    ("tradingagents.agents.risk_mgmt.neutral_debator", "create_neutral_debator"),
+])
+def test_decision_agents_see_the_trading_restriction(module, factory):
+    import importlib
+
+    from langchain_core.messages import AIMessage
+
+    from tradingagents.dataflows.config import run_config
+
+    seen = []
+
+    class _LLM:
+        def invoke(self, prompt, *a, **k):
+            seen.append(prompt if isinstance(prompt, str) else str(prompt))
+            return AIMessage("Rating: Hold\n\nnothing to do")
+
+        def with_structured_output(self, *a, **k):
+            raise NotImplementedError  # force the free-text path
+
+    state = {
+        "company_of_interest": "AAPL", "trade_date": "2026-08-14", "asset_type": "stock",
+        "instrument_context": "", "market_report": "M", "sentiment_report": "S",
+        "news_report": "N", "fundamentals_report": "F", "investment_plan": "P",
+        "trader_investment_plan": "T", "past_context": "", "portfolio_context": "",
+        "investment_debate_state": {"history": "", "count": 0},
+        "risk_debate_state": {"history": "", "latest_speaker": "", "count": 0,
+                              "aggressive_history": "", "conservative_history": "", "neutral_history": "",
+                              "current_aggressive_response": "", "current_conservative_response": "",
+                              "current_neutral_response": ""},
+    }
+    with run_config({"profit_lock_days": 30}):
+        getattr(importlib.import_module(module), factory)(_LLM())(state)
+    assert any("may not sell a position at a profit within 30 days" in p for p in seen)
+
+
+@pytest.mark.unit
+def test_research_team_is_not_given_the_restriction():
+    """The research team judges the stock, blind to the caller's account."""
+    import inspect
+
+    from tradingagents.agents.managers import research_manager
+    from tradingagents.agents.researchers import bear_researcher, bull_researcher
+    for mod in (bull_researcher, bear_researcher, research_manager):
+        source = inspect.getsource(mod)
+        assert "get_portfolio_context_from_state" not in source and "get_trading_restriction" not in source

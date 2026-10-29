@@ -331,6 +331,8 @@ The CLI takes the same content as a JSON file: `tradingagents --portfolio my_boo
 
 An empty `positions` list means a flat book, which is different from passing nothing. A run without a portfolio is never treated as flat.
 
+If your account may not sell a position at a profit within some number of days of buying it, set `profit_lock_days` (or `TRADINGAGENTS_PROFIT_LOCK_DAYS`), for example to 30. The trader, the risk analysts and the portfolio manager then recommend a purchase only when the case is expected to hold past that period, not for a move that rises and falls back inside it; a loss can still be cut at any time. Give a position its `purchase_date` (the latest purchase, `YYYY-MM-DD`) and the agents also see the date until which it may be sold only at a loss. The restriction guides the agents' recommendations; it does not guarantee them.
+
 ## Persistence and Recovery
 
 TradingAgents persists two kinds of state across runs.

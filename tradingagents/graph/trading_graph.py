@@ -17,6 +17,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients import create_tier_client, tier_provider
 from tradingagents.memory import TradingMemoryLog, settlement
 from tradingagents.memory.reflection import Reflector
+from tradingagents.portfolio import coerce_profit_lock_days
 from tradingagents.reporting import write_report_tree
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
@@ -93,6 +94,8 @@ class TradingAgentsGraph:
             raise ValueError(
                 f"max_tool_rounds={max_tool_rounds} needs max_recur_limit above {2 * max_tool_rounds + 2}"
             )
+        # A misconfigured trading restriction fails here, not mid-graph.
+        coerce_profit_lock_days(self.config.get("profit_lock_days"))
         self.graph_setup = GraphSetup(
             self.quick_thinking_llm,
             self.deep_thinking_llm,
@@ -302,7 +305,9 @@ class TradingAgentsGraph:
             trade_date,
             asset_type=asset_type,
             instrument_context=self.resolve_instrument_context(company_name, asset_type, trade_date),
-            portfolio_context=portfolio.render(company_name) if portfolio is not None else "",
+            portfolio_context=portfolio.render(
+                company_name, trade_date, coerce_profit_lock_days(self.config.get("profit_lock_days")),
+            ) if portfolio is not None else "",
         )
 
     def _memory_step(self, state):

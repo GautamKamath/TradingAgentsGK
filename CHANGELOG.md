@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Changes that need action when upgrading are listed under "Upgrading from" in their release.
 
+## [Unreleased]
+
+### Added
+
+- A profit-sale lock for accounts that may not sell at a profit within some days of buying: set `profit_lock_days` (or `TRADINGAGENTS_PROFIT_LOCK_DAYS`), for example to 30, and the trader, the risk analysts and the portfolio manager recommend a purchase only on a case expected to hold past that period, never for a move that rises and falls back inside it. A held position's optional `purchase_date` shows the agents until when it may be sold only at a loss.
+
 ## [0.7.0] — 2026-10-16
 
 Runs on your ChatGPT plan, backtests scored from the first close after each decision, a note at start-up when a newer release is out, and a wheel attached to each GitHub release.
